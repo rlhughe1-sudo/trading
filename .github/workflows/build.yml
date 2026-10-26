@@ -2,10 +2,9 @@
 name: Build DBSMPTrade
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -13,9 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Download repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set up Java 8
@@ -25,17 +23,11 @@ jobs:
           java-version: '8'
           cache: maven
 
-      - name: Show Maven and Java versions
-        run: |
-          java -version
-          mvn -version
+      - name: Build JAR
+        run: mvn --batch-mode --no-transfer-progress clean package
 
-      - name: Build plugin
-        run: mvn -B -U clean package -e
-
-      - name: Upload DBSMPTrade JAR
+      - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
           name: DBSMPTrade
           path: target/*.jar
-          if-no-files-found: error
