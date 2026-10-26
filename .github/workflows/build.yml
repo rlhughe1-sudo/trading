@@ -25,7 +25,12 @@ jobs:
           java-version: '8'
           cache: maven
 
-           - name: Build plugin
+      - name: Show Maven and Java versions
+        run: |
+          java -version
+          mvn -version
+
+      - name: Build plugin
         run: mvn -B -U clean package -e
 
       - name: Upload DBSMPTrade JAR
