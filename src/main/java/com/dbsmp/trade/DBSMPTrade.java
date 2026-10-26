@@ -37,8 +37,8 @@ public class DBSMPTrade extends JavaPlugin implements Listener {
     private void connectEconomy() {
         economy = Bukkit.getPluginManager().getPlugin("DBSMPEconomy");
         if (economy == null || !economy.isEnabled()) {
-            getLogger().warning("DBSMPEconomy not found; market is disabled.");
-            return;
+            getLogger().log(java.util.logging.Level.SEVERE,
+    "Economy connection failed.", e);
         }
 
         try {
