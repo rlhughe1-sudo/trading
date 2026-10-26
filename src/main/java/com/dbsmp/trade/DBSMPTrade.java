@@ -1,6 +1,11 @@
+
 package com.dbsmp.trade;
 
 import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.logging.Level;
+
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -17,8 +22,10 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class DBSMPTrade extends JavaPlugin implements Listener {
+
     private static final String PREFIX =
             ChatColor.DARK_PURPLE + "[DBSMP] " + ChatColor.GRAY;
+
     private static final String TITLE =
             ChatColor.DARK_PURPLE + "DBSMP Market";
 
@@ -36,87 +43,145 @@ public class DBSMPTrade extends JavaPlugin implements Listener {
 
     private void connectEconomy() {
         economy = Bukkit.getPluginManager().getPlugin("DBSMPEconomy");
+
         if (economy == null || !economy.isEnabled()) {
-            getLogger().log(java.util.logging.Level.SEVERE,
-    "Economy connection failed.", e);
+            economy = null;
+            getLogger().severe(
+                    "DBSMPEconomy is missing or disabled. "
+                    + "Make sure it is installed and enabled.");
+            return;
         }
 
         try {
             Class<?> c = economy.getClass();
-            balanceMethod = c.getMethod("getPlayerBalance", Player.class);
+
+            balanceMethod = c.getMethod(
+                    "getPlayerBalance", Player.class);
+
             withdrawMethod = c.getMethod(
                     "withdrawPlayerMoney", Player.class, double.class);
+
             depositMethod = c.getMethod(
                     "depositPlayerMoney", Player.class, double.class);
+
             getLogger().info("Connected to DBSMPEconomy.");
+
         } catch (Exception e) {
             economy = null;
-            getLogger().severe("Economy methods are missing. Check DBSMPEconomy.");
+            balanceMethod = null;
+            withdrawMethod = null;
+            depositMethod = null;
+
+            getLogger().log(
+                    Level.SEVERE,
+                    "Could not connect to DBSMPEconomy: "
+                    + e.getClass().getSimpleName()
+                    + ": " + e.getMessage(),
+                    e);
         }
     }
 
     private boolean ready() {
-        return economy != null && economy.isEnabled()
+        return economy != null
+                && economy.isEnabled()
                 && balanceMethod != null
-                && withdrawMethod != null && depositMethod != null;
+                && withdrawMethod != null
+                && depositMethod != null;
     }
 
     private double balance(Player p) {
         try {
-            return ((Number) balanceMethod.invoke(economy, p)).doubleValue();
+            Object result = balanceMethod.invoke(economy, p);
+
+            if (result instanceof Number) {
+                return ((Number) result).doubleValue();
+            }
+
+            getLogger().warning(
+                    "Economy returned an invalid balance value.");
+            return -1;
+
         } catch (Exception e) {
+            getLogger().log(
+                    Level.WARNING,
+                    "Could not retrieve player balance.",
+                    e);
             return -1;
         }
     }
 
     private boolean withdraw(Player p, double amount) {
         try {
-            return Boolean.TRUE.equals(
-                    withdrawMethod.invoke(economy, p, amount));
+            Object result = withdrawMethod.invoke(economy, p, amount);
+            return Boolean.TRUE.equals(result);
+
         } catch (Exception e) {
+            getLogger().log(
+                    Level.WARNING,
+                    "Could not withdraw player money.",
+                    e);
             return false;
         }
     }
 
-    private void deposit(Player p, double amount) {
+    private boolean deposit(Player p, double amount) {
         try {
-            depositMethod.invoke(economy, p, amount);
+            Object result = depositMethod.invoke(economy, p, amount);
+
+            // DBSMPEconomy's depositPlayerMoney method returns void.
+            // A successful invocation therefore returns null.
+            return true;
+
         } catch (Exception e) {
-            getLogger().warning("Could not deposit sale money.");
+            getLogger().log(
+                    Level.WARNING,
+                    "Could not deposit sale money.",
+                    e);
+            return false;
         }
     }
 
-    private String cash(double n) {
-        return "$" + String.format(java.util.Locale.US, "%,.0f", n);
+    private String cash(double amount) {
+        return "$" + String.format(Locale.US, "%,.0f", amount);
     }
 
     private ItemStack item(Material type, String name) {
         ItemStack stack = new ItemStack(type);
         ItemMeta meta = stack.getItemMeta();
-        meta.setDisplayName(ChatColor.GOLD + name);
-        stack.setItemMeta(meta);
+
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.GOLD + name);
+            stack.setItemMeta(meta);
+        }
+
         return stack;
     }
 
     private void openMarket(Player p) {
         Inventory inv = Bukkit.createInventory(null, 27, TITLE);
+
         inv.setItem(10, item(Material.BREAD, "Buy 16 Bread - $150"));
         inv.setItem(12, item(Material.IRON_INGOT, "Buy 8 Iron - $400"));
         inv.setItem(14, item(Material.GOLD_INGOT, "Buy 8 Gold - $600"));
         inv.setItem(16, item(Material.DIAMOND, "Buy 1 Diamond - $1,000"));
+
         p.openInventory(inv);
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd,
-                             String label, String[] args) {
+    public boolean onCommand(
+            CommandSender sender,
+            Command cmd,
+            String label,
+            String[] args) {
+
         if (!(sender instanceof Player)) {
             sender.sendMessage("Players only.");
             return true;
         }
 
         Player p = (Player) sender;
-        String name = cmd.getName().toLowerCase();
+        String name = cmd.getName().toLowerCase(Locale.ROOT);
 
         if (name.equals("dbmarket")) {
             openMarket(p);
@@ -126,19 +191,23 @@ public class DBSMPTrade extends JavaPlugin implements Listener {
         if (name.equals("dbsell")) {
             if (!ready()) {
                 p.sendMessage(PREFIX + ChatColor.RED
-                        + "Economy connection unavailable.");
+                        + "Economy connection unavailable. "
+                        + "Check the server console.");
                 return true;
             }
 
             ItemStack hand = p.getItemInHand();
+
             if (hand == null || hand.getType() == Material.AIR) {
                 p.sendMessage(PREFIX + "Hold an item to sell.");
                 return true;
             }
 
             double unitPrice = sellPrice(hand.getType());
+
             if (unitPrice <= 0) {
-                p.sendMessage(PREFIX + "The market doesn't buy that item.");
+                p.sendMessage(
+                        PREFIX + "The market doesn't buy that item.");
                 return true;
             }
 
@@ -146,57 +215,95 @@ public class DBSMPTrade extends JavaPlugin implements Listener {
             int amount = hand.getAmount();
             double total = unitPrice * amount;
 
+            if (!deposit(p, total)) {
+                p.sendMessage(PREFIX + ChatColor.RED
+                        + "Sale failed. Your item was not sold.");
+                return true;
+            }
+
             p.setItemInHand(null);
-            deposit(p, total);
+
+            double newBalance = balance(p);
+
             p.sendMessage(PREFIX + "Sold " + amount + " "
-                    + soldType.name().toLowerCase() + " for "
-                    + cash(total) + ". Balance: " + cash(balance(p)));
+                    + soldType.name().toLowerCase(Locale.ROOT)
+                    + " for " + cash(total)
+                    + ". Balance: " + cash(newBalance));
+
             return true;
         }
 
         if (name.equals("dbtrade")) {
             p.sendMessage(PREFIX
-                    + "Player-to-player item trading isn't implemented yet.");
+                    + "Player-to-player item trading "
+                    + "isn't implemented yet.");
             return true;
         }
 
         return false;
     }
 
-    private double sellPrice(Material m) {
-        if (m == Material.BREAD) return 3;
-        if (m == Material.IRON_INGOT) return 25;
-        if (m == Material.GOLD_INGOT) return 35;
-        if (m == Material.DIAMOND) return 100;
+    private double sellPrice(Material material) {
+        if (material == Material.BREAD) return 3;
+        if (material == Material.IRON_INGOT) return 25;
+        if (material == Material.GOLD_INGOT) return 35;
+        if (material == Material.DIAMOND) return 100;
+
         return 0;
     }
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
-        if (!TITLE.equals(e.getInventory().getTitle())) return;
+        if (!TITLE.equals(e.getInventory().getTitle())) {
+            return;
+        }
+
         e.setCancelled(true);
 
-        if (!(e.getWhoClicked() instanceof Player)) return;
+        if (!(e.getWhoClicked() instanceof Player)) {
+            return;
+        }
+
         if (e.getRawSlot() < 0
-                || e.getRawSlot() >= e.getInventory().getSize()) return;
+                || e.getRawSlot() >= e.getInventory().getSize()) {
+            return;
+        }
 
         Player p = (Player) e.getWhoClicked();
         int slot = e.getRawSlot();
 
-        if (slot == 10) buy(p, Material.BREAD, 16, 150);
-        else if (slot == 12) buy(p, Material.IRON_INGOT, 8, 400);
-        else if (slot == 14) buy(p, Material.GOLD_INGOT, 8, 600);
-        else if (slot == 16) buy(p, Material.DIAMOND, 1, 1000);
+        if (slot == 10) {
+            buy(p, Material.BREAD, 16, 150);
+        } else if (slot == 12) {
+            buy(p, Material.IRON_INGOT, 8, 400);
+        } else if (slot == 14) {
+            buy(p, Material.GOLD_INGOT, 8, 600);
+        } else if (slot == 16) {
+            buy(p, Material.DIAMOND, 1, 1000);
+        }
     }
 
-    private void buy(Player p, Material material, int amount, double price) {
+    private void buy(
+            Player p,
+            Material material,
+            int amount,
+            double price) {
+
         if (!ready()) {
             p.sendMessage(PREFIX + ChatColor.RED
-                    + "Economy connection unavailable.");
+                    + "Economy connection unavailable. "
+                    + "Check the server console.");
             return;
         }
 
         double current = balance(p);
+
+        if (current < 0) {
+            p.sendMessage(PREFIX + ChatColor.RED
+                    + "Could not retrieve your balance.");
+            return;
+        }
+
         if (current < price) {
             p.sendMessage(PREFIX + "You need "
                     + cash(price - current) + " more.");
@@ -204,19 +311,24 @@ public class DBSMPTrade extends JavaPlugin implements Listener {
         }
 
         if (!withdraw(p, price)) {
-            p.sendMessage(PREFIX + "Payment failed; no items were given.");
+            p.sendMessage(PREFIX
+                    + "Payment failed; no items were given.");
             return;
         }
 
-        java.util.HashMap<Integer, ItemStack> leftovers =
-                p.getInventory().addItem(new ItemStack(material, amount));
+        HashMap<Integer, ItemStack> leftovers =
+                p.getInventory().addItem(
+                        new ItemStack(material, amount));
+
         for (ItemStack left : leftovers.values()) {
             p.getWorld().dropItemNaturally(p.getLocation(), left);
         }
 
         p.sendMessage(PREFIX + "Bought " + amount + " "
-                + material.name().toLowerCase() + " for " + cash(price)
+                + material.name().toLowerCase(Locale.ROOT)
+                + " for " + cash(price)
                 + ". Balance: " + cash(balance(p)));
+
         p.closeInventory();
     }
 }
