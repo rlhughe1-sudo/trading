@@ -1,0 +1,17 @@
+
+name: DBSMPTrade
+main: com.dbsmp.trade.DBSMPTrade
+version: 1.0.0
+author: DBSMP
+description: DBSMP shop, item selling, and player trading
+
+commands:
+  dbtrade:
+    description: Open the player trading system
+    usage: /dbtrade <player>
+  dbsell:
+    description: Sell items from your inventory
+    usage: /dbsell
+  dbmarket:
+    description: Open the item shop
+    usage: /dbmarket
