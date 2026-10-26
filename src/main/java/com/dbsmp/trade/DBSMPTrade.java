@@ -1,10 +1,6 @@
-
 package com.dbsmp.trade;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
+import java.lang.reflect.Method;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -14,244 +10,213 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class DBSMPTrade extends JavaPlugin implements Listener {
-
-    private final Map<UUID, UUID> pendingTrades =
-            new HashMap<UUID, UUID>();
-
-    private final Map<UUID, TradeOffer> offers =
-            new HashMap<UUID, TradeOffer>();
-
-    private static final String SHOP_TITLE =
-            ChatColor.DARK_PURPLE + "DBSMP Market";
-
-    private static final String CONFIRM_TITLE =
-            ChatColor.GREEN + "Confirm Trade";
-
     private static final String PREFIX =
             ChatColor.DARK_PURPLE + "[DBSMP] " + ChatColor.GRAY;
+    private static final String TITLE =
+            ChatColor.DARK_PURPLE + "DBSMP Market";
+
+    private Plugin economy;
+    private Method balanceMethod;
+    private Method withdrawMethod;
+    private Method depositMethod;
 
     @Override
     public void onEnable() {
         Bukkit.getPluginManager().registerEvents(this, this);
+        connectEconomy();
         getLogger().info("DBSMPTrade enabled.");
     }
 
-    @Override
-    public void onDisable() {
-        pendingTrades.clear();
-        offers.clear();
-    }
-
-    private ItemStack menuItem(Material material, String name,
-                               String... lore) {
-        ItemStack item = new ItemStack(material);
-        ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(ChatColor.GOLD + name);
-
-        java.util.List<String> lines =
-                new java.util.ArrayList<String>();
-
-        for (String line : lore) {
-            lines.add(ChatColor.GRAY + line);
+    private void connectEconomy() {
+        economy = Bukkit.getPluginManager().getPlugin("DBSMPEconomy");
+        if (economy == null || !economy.isEnabled()) {
+            getLogger().warning("DBSMPEconomy not found; market is disabled.");
+            return;
         }
 
-        meta.setLore(lines);
-        item.setItemMeta(meta);
-        return item;
+        try {
+            Class<?> c = economy.getClass();
+            balanceMethod = c.getMethod("getPlayerBalance", Player.class);
+            withdrawMethod = c.getMethod(
+                    "withdrawPlayerMoney", Player.class, double.class);
+            depositMethod = c.getMethod(
+                    "depositPlayerMoney", Player.class, double.class);
+            getLogger().info("Connected to DBSMPEconomy.");
+        } catch (Exception e) {
+            economy = null;
+            getLogger().severe("Economy methods are missing. Check DBSMPEconomy.");
+        }
     }
 
-    private void openMarket(Player player) {
-        Inventory inv = Bukkit.createInventory(
-                null, 27, SHOP_TITLE);
-
-        inv.setItem(10, menuItem(Material.BREAD,
-                "Buy 16 Bread - $150",
-                "Click to buy"));
-
-        inv.setItem(12, menuItem(Material.IRON_INGOT,
-                "Buy 8 Iron Ingots - $400",
-                "Click to buy"));
-
-        inv.setItem(14, menuItem(Material.GOLD_INGOT,
-                "Buy 8 Gold Ingots - $600",
-                "Click to buy"));
-
-        inv.setItem(16, menuItem(Material.DIAMOND,
-                "Buy 1 Diamond - $1,000",
-                "Click to buy"));
-
-        player.openInventory(inv);
+    private boolean ready() {
+        return economy != null && economy.isEnabled()
+                && balanceMethod != null
+                && withdrawMethod != null && depositMethod != null;
     }
 
-    private void openConfirm(Player sender, Player target) {
-        Inventory inv = Bukkit.createInventory(
-                null, 9, CONFIRM_TITLE);
+    private double balance(Player p) {
+        try {
+            return ((Number) balanceMethod.invoke(economy, p)).doubleValue();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
 
-        inv.setItem(3, menuItem(Material.EMERALD,
-                "Accept trade with " + target.getName(),
-                "Click to accept"));
+    private boolean withdraw(Player p, double amount) {
+        try {
+            return Boolean.TRUE.equals(
+                    withdrawMethod.invoke(economy, p, amount));
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
-        inv.setItem(5, menuItem(Material.REDSTONE_BLOCK,
-                "Cancel trade",
-                "Click to cancel"));
+    private void deposit(Player p, double amount) {
+        try {
+            depositMethod.invoke(economy, p, amount);
+        } catch (Exception e) {
+            getLogger().warning("Could not deposit sale money.");
+        }
+    }
 
-        pendingTrades.put(sender.getUniqueId(),
-                target.getUniqueId());
+    private String cash(double n) {
+        return "$" + String.format(java.util.Locale.US, "%,.0f", n);
+    }
 
-        target.sendMessage(PREFIX + sender.getName()
-                + " wants to trade with you. Use /dbtrade "
-                + sender.getName() + " to review.");
+    private ItemStack item(Material type, String name) {
+        ItemStack stack = new ItemStack(type);
+        ItemMeta meta = stack.getItemMeta();
+        meta.setDisplayName(ChatColor.GOLD + name);
+        stack.setItemMeta(meta);
+        return stack;
+    }
 
-        sender.openInventory(inv);
+    private void openMarket(Player p) {
+        Inventory inv = Bukkit.createInventory(null, 27, TITLE);
+        inv.setItem(10, item(Material.BREAD, "Buy 16 Bread - $150"));
+        inv.setItem(12, item(Material.IRON_INGOT, "Buy 8 Iron - $400"));
+        inv.setItem(14, item(Material.GOLD_INGOT, "Buy 8 Gold - $600"));
+        inv.setItem(16, item(Material.DIAMOND, "Buy 1 Diamond - $1,000"));
+        p.openInventory(inv);
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command,
+    public boolean onCommand(CommandSender sender, Command cmd,
                              String label, String[] args) {
         if (!(sender instanceof Player)) {
             sender.sendMessage("Players only.");
             return true;
         }
 
-        Player player = (Player) sender;
-        String name = command.getName().toLowerCase();
+        Player p = (Player) sender;
+        String name = cmd.getName().toLowerCase();
 
         if (name.equals("dbmarket")) {
-            openMarket(player);
+            openMarket(p);
             return true;
         }
 
         if (name.equals("dbsell")) {
-            player.sendMessage(PREFIX
-                    + "Selling is not connected to your economy yet.");
-            player.sendMessage(PREFIX
-                    + "Use the market after the economy connection is added.");
+            if (!ready()) {
+                p.sendMessage(PREFIX + ChatColor.RED
+                        + "Economy connection unavailable.");
+                return true;
+            }
+
+            ItemStack hand = p.getItemInHand();
+            if (hand == null || hand.getType() == Material.AIR) {
+                p.sendMessage(PREFIX + "Hold an item to sell.");
+                return true;
+            }
+
+            double unitPrice = sellPrice(hand.getType());
+            if (unitPrice <= 0) {
+                p.sendMessage(PREFIX + "The market doesn't buy that item.");
+                return true;
+            }
+
+            Material soldType = hand.getType();
+            int amount = hand.getAmount();
+            double total = unitPrice * amount;
+
+            p.setItemInHand(null);
+            deposit(p, total);
+            p.sendMessage(PREFIX + "Sold " + amount + " "
+                    + soldType.name().toLowerCase() + " for "
+                    + cash(total) + ". Balance: " + cash(balance(p)));
             return true;
         }
 
         if (name.equals("dbtrade")) {
-            if (args.length != 1) {
-                player.sendMessage(PREFIX
-                        + "Usage: /dbtrade <player>");
-                return true;
-            }
-
-            Player target = Bukkit.getPlayer(args[0]);
-
-            if (target == null || target.equals(player)) {
-                player.sendMessage(PREFIX
-                        + "Choose another online player.");
-                return true;
-            }
-
-            openConfirm(player, target);
+            p.sendMessage(PREFIX
+                    + "Player-to-player item trading isn't implemented yet.");
             return true;
         }
 
         return false;
     }
 
-    @EventHandler
-    public void onInventoryClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player)) {
-            return;
-        }
-
-        Player player = (Player) event.getWhoClicked();
-        String title = event.getInventory().getTitle();
-
-        if (SHOP_TITLE.equals(title)) {
-            event.setCancelled(true);
-
-            ItemStack clicked = event.getCurrentItem();
-            if (clicked == null || !clicked.hasItemMeta()) {
-                return;
-            }
-
-            int slot = event.getRawSlot();
-
-            if (slot == 10) {
-                buy(player, Material.BREAD, 16, 150);
-            } else if (slot == 12) {
-                buy(player, Material.IRON_INGOT, 8, 400);
-            } else if (slot == 14) {
-                buy(player, Material.GOLD_INGOT, 8, 600);
-            } else if (slot == 16) {
-                buy(player, Material.DIAMOND, 1, 1000);
-            }
-
-            return;
-        }
-
-        if (CONFIRM_TITLE.equals(title)) {
-            event.setCancelled(true);
-
-            UUID targetId = pendingTrades.get(player.getUniqueId());
-            if (targetId == null) {
-                player.closeInventory();
-                player.sendMessage(PREFIX
-                        + "That trade request has expired.");
-                return;
-            }
-
-            if (event.getRawSlot() == 5) {
-                pendingTrades.remove(player.getUniqueId());
-                player.closeInventory();
-                player.sendMessage(PREFIX + "Trade cancelled.");
-                return;
-            }
-
-            if (event.getRawSlot() == 3) {
-                Player target = Bukkit.getPlayer(targetId);
-
-                if (target == null) {
-                    player.closeInventory();
-                    player.sendMessage(PREFIX
-                            + "That player is offline.");
-                    pendingTrades.remove(player.getUniqueId());
-                    return;
-                }
-
-                pendingTrades.remove(player.getUniqueId());
-                player.closeInventory();
-                player.sendMessage(PREFIX
-                        + "Trade request accepted. "
-                        + "Item-for-item trading is not implemented yet.");
-                target.sendMessage(PREFIX + player.getName()
-                        + " accepted the request.");
-            }
-        }
-    }
-
-    private void buy(Player player, Material material,
-                     int amount, double price) {
-        player.sendMessage(PREFIX
-                + "The market needs the DBSMPEconomy connection "
-                + "before purchases can charge your balance.");
+    private double sellPrice(Material m) {
+        if (m == Material.BREAD) return 3;
+        if (m == Material.IRON_INGOT) return 25;
+        if (m == Material.GOLD_INGOT) return 35;
+        if (m == Material.DIAMOND) return 100;
+        return 0;
     }
 
     @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        UUID id = event.getPlayer().getUniqueId();
-        pendingTrades.remove(id);
-        offers.remove(id);
-        pendingTrades.values().remove(id);
+    public void onInventoryClick(InventoryClickEvent e) {
+        if (!TITLE.equals(e.getInventory().getTitle())) return;
+        e.setCancelled(true);
+
+        if (!(e.getWhoClicked() instanceof Player)) return;
+        if (e.getRawSlot() < 0
+                || e.getRawSlot() >= e.getInventory().getSize()) return;
+
+        Player p = (Player) e.getWhoClicked();
+        int slot = e.getRawSlot();
+
+        if (slot == 10) buy(p, Material.BREAD, 16, 150);
+        else if (slot == 12) buy(p, Material.IRON_INGOT, 8, 400);
+        else if (slot == 14) buy(p, Material.GOLD_INGOT, 8, 600);
+        else if (slot == 16) buy(p, Material.DIAMOND, 1, 1000);
     }
 
-    private static class TradeOffer {
-        private final UUID player;
-        private final ItemStack item;
-
-        private TradeOffer(UUID player, ItemStack item) {
-            this.player = player;
-            this.item = item;
+    private void buy(Player p, Material material, int amount, double price) {
+        if (!ready()) {
+            p.sendMessage(PREFIX + ChatColor.RED
+                    + "Economy connection unavailable.");
+            return;
         }
+
+        double current = balance(p);
+        if (current < price) {
+            p.sendMessage(PREFIX + "You need "
+                    + cash(price - current) + " more.");
+            return;
+        }
+
+        if (!withdraw(p, price)) {
+            p.sendMessage(PREFIX + "Payment failed; no items were given.");
+            return;
+        }
+
+        java.util.HashMap<Integer, ItemStack> leftovers =
+                p.getInventory().addItem(new ItemStack(material, amount));
+        for (ItemStack left : leftovers.values()) {
+            p.getWorld().dropItemNaturally(p.getLocation(), left);
+        }
+
+        p.sendMessage(PREFIX + "Bought " + amount + " "
+                + material.name().toLowerCase() + " for " + cash(price)
+                + ". Balance: " + cash(balance(p)));
+        p.closeInventory();
     }
 }
